@@ -148,11 +148,10 @@ def tab_registro():
             trabajador = por_id[tid]
             st.caption(f"Cargo: {trabajador['cargo']} · Sucursal: {trabajador['sucursal']}")
 
-    # 2. EPPs
+        # 2. EPPs
     st.subheader("2. Lista de EPP entregados")
     catalogo = {e["id"]: e for e in cargar_catalogo()}
-    elegidos = catalogo = {e["id"]: e for e in cargar_catalogo()}
-elegidos = selector_epp(catalogo, n)
+    elegidos = selector_epp(catalogo, n)
     items = []
     for i in elegidos:
         e = catalogo[i]
