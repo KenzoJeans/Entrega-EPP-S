@@ -101,7 +101,7 @@ def selector_epp(catalogo, n):
             for col, e in zip(cols, lista[k:k + 2]):
                 with col:
                     if e.get("imagen_url"):
-                        st.image(e["imagen_url"], use_container_width=True)
+                        st.image(e["imagen_url"], width=180)
                     else:
                         st.markdown(
                             "<div style='font-size:3rem;text-align:center'>🦺</div>",
