@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 from supabase import create_client
 
-# 1. Cambiado a "wide" para ganar espacio horizontal en la pantalla
 st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="wide")
 
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
@@ -82,30 +81,20 @@ def selector_epp(catalogo, n):
     st.session_state.setdefault(clave, [])
     seleccion = st.session_state[clave]
 
-    # Estilo CSS para forzar una cuadrícula perfecta de 3 columnas idénticas
+    # Estilo CSS para alinear al centro y ajustar el botón al ancho exacto de la imagen (120px)
     st.markdown(
         """
         <style>
-        .grid-epp-container {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-        @media (max-width: 768px) {
-            .grid-epp-container {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-        .epp-card {
-            background-color: transparent;
-            border-radius: 8px;
-            padding: 0.5rem;
-            text-align: center;
+        .st-key-grid_epp [data-testid="column"] {
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: space-between;
+        }
+        .st-key-grid_epp button {
+            width: 120px !important;
+            max-width: 120px !important;
+            white-space: normal !important;
+            font-size: 0.85rem !important;
         }
         </style>
         """,
@@ -113,14 +102,11 @@ def selector_epp(catalogo, n):
     )
 
     lista = list(catalogo.values())
-    
-    # Renderizamos usando contenedores de columnas nativos pero asegurando orden
-    for k in range(0, len(lista), 3):
-        cols = st.columns(3)
-        for col, e in zip(cols, lista[k:k + 3]):
-            with col:
-                # Contenedor visual centrado para la imagen y el botón
-                with st.container():
+    with st.container(key="grid_epp"):
+        for k in range(0, len(lista), 3):
+            cols = st.columns(3)
+            for col, e in zip(cols, lista[k:k + 3]):
+                with col:
                     if e.get("imagen_url"):
                         st.image(e["imagen_url"], width=120)
                     else:
@@ -133,7 +119,7 @@ def selector_epp(catalogo, n):
                         ("✓ " if marcado else "") + e["nombre"],
                         key=f"b{e['id']}_{n}",
                         type="primary" if marcado else "secondary",
-                        use_container_width=True,
+                        use_container_width=False,
                         on_click=alternar,
                         args=(clave, e["id"]),
                     )
