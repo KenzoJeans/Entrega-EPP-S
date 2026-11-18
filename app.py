@@ -44,11 +44,10 @@ def encabezado():
 def cargar_catalogo():
     r = (
         get_sb().table("epp_catalogo")
-        .select("id,nombre,requiere_talla")
+        .select("id,nombre,requiere_talla,imagen_url")
         .eq("activo", True)
         .order("nombre")
         .execute()
-        .select("id,nombre,requiere_talla,imagen_url")
     )
     return r.data
 
