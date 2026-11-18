@@ -48,6 +48,7 @@ def cargar_catalogo():
         .eq("activo", True)
         .order("nombre")
         .execute()
+        .select("id,nombre,requiere_talla,imagen_url")
     )
     return r.data
 
@@ -66,7 +67,57 @@ def buscar_trabajadores(texto):
         .execute()
     )
     return r.data
+def alternar(clave, epp_id):
+    sel = st.session_state[clave]
+    if epp_id in sel:
+        sel.remove(epp_id)
+    else:
+        sel.append(epp_id)
 
+
+def selector_epp(catalogo, n):
+    clave = f"sel{n}"
+    st.session_state.setdefault(clave, [])
+    seleccion = st.session_state[clave]
+
+    # Mantiene 2 columnas también en el celular (solo dentro de esta cuadrícula)
+    st.markdown(
+        """
+        <style>
+        .st-key-grid_epp [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
+        .st-key-grid_epp [data-testid="stColumn"],
+        .st-key-grid_epp [data-testid="column"] {
+            min-width: calc(50% - 1rem) !important;
+            flex: 1 1 calc(50% - 1rem) !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    lista = list(catalogo.values())
+    with st.container(key="grid_epp"):
+        for k in range(0, len(lista), 2):
+            cols = st.columns(2)
+            for col, e in zip(cols, lista[k:k + 2]):
+                with col:
+                    if e.get("imagen_url"):
+                        st.image(e["imagen_url"], use_container_width=True)
+                    else:
+                        st.markdown(
+                            "<div style='font-size:3rem;text-align:center'>🦺</div>",
+                            unsafe_allow_html=True,
+                        )
+                    marcado = e["id"] in seleccion
+                    st.button(
+                        ("✓ " if marcado else "") + e["nombre"],
+                        key=f"b{e['id']}_{n}",
+                        type="primary" if marcado else "secondary",
+                        use_container_width=True,
+                        on_click=alternar,
+                        args=(clave, e["id"]),
+                    )
+    return seleccion
 
 # ---------- Pestaña 1: registrar ----------
 def tab_registro():
@@ -100,12 +151,8 @@ def tab_registro():
     # 2. EPPs
     st.subheader("2. Lista de EPP entregados")
     catalogo = {e["id"]: e for e in cargar_catalogo()}
-    elegidos = st.multiselect(
-        "Selecciona los EPP",
-        list(catalogo),
-        format_func=lambda i: catalogo[i]["nombre"],
-        key=f"epps{n}",
-    )
+    elegidos = catalogo = {e["id"]: e for e in cargar_catalogo()}
+elegidos = selector_epp(catalogo, n)
     items = []
     for i in elegidos:
         e = catalogo[i]
