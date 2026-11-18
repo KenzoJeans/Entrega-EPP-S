@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 from supabase import create_client
 
-st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="centered")
+# 1. Cambiado a "wide" para ganar espacio horizontal en la pantalla
+st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="wide")
 
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
 LOGO = "logo.png"
@@ -66,6 +67,8 @@ def buscar_trabajadores(texto):
         .execute()
     )
     return r.data
+
+
 def alternar(clave, epp_id):
     sel = st.session_state[clave]
     if epp_id in sel:
@@ -79,15 +82,16 @@ def selector_epp(catalogo, n):
     st.session_state.setdefault(clave, [])
     seleccion = st.session_state[clave]
 
-    # Mantiene 2 columnas también en el celular (solo dentro de esta cuadrícula)
+    # Mantiene 3 columnas optimizadas para ganar espacio y encajar con la tarjeta
     st.markdown(
         """
         <style>
         .st-key-grid_epp [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
         .st-key-grid_epp [data-testid="stColumn"],
         .st-key-grid_epp [data-testid="column"] {
-            min-width: calc(50% - 1rem) !important;
-            flex: 1 1 calc(50% - 1rem) !important;
+            min-width: calc(33.33% - 1rem) !important;
+            flex: 1 1 calc(33.33% - 1rem) !important;
+            text-align: center;
         }
         </style>
         """,
@@ -96,15 +100,15 @@ def selector_epp(catalogo, n):
 
     lista = list(catalogo.values())
     with st.container(key="grid_epp"):
-        for k in range(0, len(lista), 2):
-            cols = st.columns(2)
-            for col, e in zip(cols, lista[k:k + 2]):
+        for k in range(0, len(lista), 3):
+            cols = st.columns(3)
+            for col, e in zip(cols, lista[k:k + 3]):
                 with col:
                     if e.get("imagen_url"):
-                        st.image(e["imagen_url"], width=180)
+                        st.image(e["imagen_url"], width=130)
                     else:
                         st.markdown(
-                            "<div style='font-size:3rem;text-align:center'>🦺</div>",
+                            "<div style='font-size:2.5rem;text-align:center'>🦺</div>",
                             unsafe_allow_html=True,
                         )
                     marcado = e["id"] in seleccion
@@ -118,9 +122,10 @@ def selector_epp(catalogo, n):
                     )
     return seleccion
 
+
 # ---------- Pestaña 1: registrar ----------
 def tab_registro():
-    n = st.session_state.setdefault("form_n", 0)  # cambia para limpiar el formulario
+    n = st.session_state.setdefault("form_n", 0)
 
     msg = st.session_state.pop("ok_msg", None)
     if msg:
@@ -147,7 +152,7 @@ def tab_registro():
             trabajador = por_id[tid]
             st.caption(f"Cargo: {trabajador['cargo']} · Sucursal: {trabajador['sucursal']}")
 
-        # 2. EPPs
+    # 2. EPPs
     st.subheader("2. Lista de EPP entregados")
     catalogo = {e["id"]: e for e in cargar_catalogo()}
     elegidos = selector_epp(catalogo, n)
