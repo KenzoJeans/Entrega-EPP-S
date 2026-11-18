@@ -82,16 +82,30 @@ def selector_epp(catalogo, n):
     st.session_state.setdefault(clave, [])
     seleccion = st.session_state[clave]
 
-    # Mantiene 3 columnas optimizadas para ganar espacio y encajar con la tarjeta
+    # Estilo CSS para forzar una cuadrícula perfecta de 3 columnas idénticas
     st.markdown(
         """
         <style>
-        .st-key-grid_epp [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
-        .st-key-grid_epp [data-testid="stColumn"],
-        .st-key-grid_epp [data-testid="column"] {
-            min-width: calc(33.33% - 1rem) !important;
-            flex: 1 1 calc(33.33% - 1rem) !important;
+        .grid-epp-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        @media (max-width: 768px) {
+            .grid-epp-container {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        .epp-card {
+            background-color: transparent;
+            border-radius: 8px;
+            padding: 0.5rem;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
         }
         </style>
         """,
@@ -99,16 +113,19 @@ def selector_epp(catalogo, n):
     )
 
     lista = list(catalogo.values())
-    with st.container(key="grid_epp"):
-        for k in range(0, len(lista), 3):
-            cols = st.columns(3)
-            for col, e in zip(cols, lista[k:k + 3]):
-                with col:
+    
+    # Renderizamos usando contenedores de columnas nativos pero asegurando orden
+    for k in range(0, len(lista), 3):
+        cols = st.columns(3)
+        for col, e in zip(cols, lista[k:k + 3]):
+            with col:
+                # Contenedor visual centrado para la imagen y el botón
+                with st.container():
                     if e.get("imagen_url"):
-                        st.image(e["imagen_url"], width=130)
+                        st.image(e["imagen_url"], width=120)
                     else:
                         st.markdown(
-                            "<div style='font-size:2.5rem;text-align:center'>🦺</div>",
+                            "<div style='font-size:2.5rem;text-align:center;height:120px;display:flex;align-items:center;justify-content:center;'>🦺</div>",
                             unsafe_allow_html=True,
                         )
                     marcado = e["id"] in seleccion
