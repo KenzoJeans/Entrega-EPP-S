@@ -347,78 +347,180 @@ def tab_historial():
         st.caption("Esta entrega no tiene firma.")
 
 # ---------- Generador de Acta PDF con Firma ----------
+from fpdf import FPDF
+
+
+def _txt(texto):
+    """Asegura compatibilidad de tildes y caracteres latinos en FPDF."""
+    return str(texto or "").encode("latin-1", "replace").decode("latin-1")
+
+
+class ActaEPP(FPDF):
+    def header(self):
+        # Marco del encabezado estilo Sistema de Gestión (3 columnas)
+        y_inicio = 10
+        alto_hdr = 24
+        self.set_line_width(0.3)
+
+        # Columna 1: Logo (x=10 a 50)
+        self.rect(10, y_inicio, 40, alto_hdr)
+        if os.path.exists(LOGO):
+            self.image(LOGO, x=13, y=y_inicio + 3, w=34)
+
+        # Columna 2: Razón Social, Título y Datos Corporativos (x=50 a 152)
+        self.rect(50, y_inicio, 102, alto_hdr)
+        self.set_xy(50, y_inicio + 2)
+        self.set_font("Helvetica", "B", 10)
+        self.cell(102, 4.5, _txt("KENZO JEANS S.A.S."), align="C", ln=True)
+
+        self.set_x(50)
+        self.set_font("Helvetica", "B", 8.5)
+        self.cell(
+            102,
+            4.5,
+            _txt("ACTA DE ENTREGA DE ELEMENTOS DE PROTECCIÓN PERSONAL"),
+            align="C",
+            ln=True,
+        )
+
+        self.set_x(50)
+        self.set_font("Helvetica", "", 7)
+        self.cell(
+            102,
+            3.8,
+            _txt("Sociedad por Acciones Simplificada · Bogotá D.C., Colombia"),
+            align="C",
+            ln=True,
+        )
+        self.set_x(50)
+        self.cell(
+            102,
+            3.8,
+            _txt("Dirección: Carrera 68D # 11-71, Bogotá · Tel: (601) 786 8232"),
+            align="C",
+            ln=True,
+        )
+
+        # Columna 3: Control Documental SST (x=152 a 200)
+        self.rect(152, y_inicio, 48, 8)
+        self.rect(152, y_inicio + 8, 48, 8)
+        self.rect(152, y_inicio + 16, 48, 8)
+
+        self.set_font("Helvetica", "B", 7.5)
+        self.set_xy(153, y_inicio + 1.5)
+        self.cell(46, 5, _txt("Código: SST-HI-ED-FO-04"), align="L")
+
+        self.set_xy(153, y_inicio + 9.5)
+        self.cell(46, 5, _txt("Versión: 2"), align="L")
+
+        self.set_xy(153, y_inicio + 17.5)
+        self.set_font("Helvetica", "", 7.5)
+        self.cell(46, 5, _txt(f"Página {self.page_no()} de {{nb}}"), align="L")
+
+        self.set_y(y_inicio + alto_hdr + 5)
+
+    def footer(self):
+        self.set_y(-12)
+        self.set_font("Helvetica", "I", 7)
+        self.set_text_color(110, 110, 110)
+        self.cell(
+            0,
+            5,
+            _txt("KENZO JEANS S.A.S. - Sistema de Gestión de Seguridad y Salud en el Trabajo (SG-SST)"),
+            align="C",
+        )
+        self.set_text_color(0, 0, 0)
+
+
 def generar_acta_pdf(entrega, firma_bytes=None):
-    pdf = FPDF()
+    pdf = ActaEPP()
+    pdf.alias_nb_pages()
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=True, margin=16)
 
-    # Encabezado con Logo
-    if os.path.exists(LOGO):
-        pdf.image(LOGO, x=10, y=10, w=32)
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 8, "ACTA DE ENTREGA DE ELEMENTOS DE PROTECCIÓN PERSONAL", ln=True, align="R")
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Registro N.° {entrega['id']}  |  Fecha: {entrega['fecha_local']}", ln=True, align="R")
-    pdf.ln(12)
+    # Sub-barra con consecutivo y fecha de entrega
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(95, 6, _txt(f"ACTA DE ENTREGA N.° {entrega['id']}"), align="L")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(95, 6, _txt(f"Fecha y hora: {entrega['fecha_local']}"), align="R", ln=True)
+    pdf.ln(2)
 
-    # Datos del trabajador
+    # 1. Datos del trabajador
     trab = entrega["trabajadores"]
-    pdf.set_fill_color(240, 242, 246)
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(0, 7, " 1. DATOS DEL TRABAJADOR", ln=True, fill=True)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(100, 7, f"Nombre: {trab['nombre']}", border=1)
-    pdf.cell(90, 7, f"Cédula: {trab['cedula']}", border=1, ln=True)
-    pdf.cell(100, 7, f"Cargo: {trab.get('cargo') or 'N/A'}", border=1)
-    pdf.cell(90, 7, f"Sucursal: {trab.get('sucursal') or 'N/A'}", border=1, ln=True)
-    pdf.ln(6)
+    pdf.set_fill_color(235, 238, 242)
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.cell(0, 7, _txt(" 1. DATOS DEL TRABAJADOR"), border=1, ln=True, fill=True)
 
-    # Tabla de EPPs entregados
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(0, 7, " 2. ELEMENTOS ENTREGADOS", ln=True, fill=True)
-    pdf.cell(95, 7, "Elemento (EPP)", border=1)
-    pdf.cell(25, 7, "Cant.", border=1, align="C")
-    pdf.cell(30, 7, "Talla", border=1, align="C")
-    pdf.cell(40, 7, "Motivo", border=1, align="C", ln=True)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(110, 7, _txt(f" Nombre: {trab['nombre']}"), border=1)
+    pdf.cell(80, 7, _txt(f" Cédula: {trab['cedula']}"), border=1, ln=True)
+    pdf.cell(110, 7, _txt(f" Cargo: {trab.get('cargo') or 'N/A'}"), border=1)
+    pdf.cell(80, 7, _txt(f" Sucursal: {trab.get('sucursal') or 'N/A'}"), border=1, ln=True)
+    pdf.ln(5)
 
-    pdf.set_font("Helvetica", "", 9.5)
+    # 2. Tabla de EPPs entregados
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.cell(0, 7, _txt(" 2. ELEMENTOS DE PROTECCIÓN PERSONAL ENTREGADOS"), border=1, ln=True, fill=True)
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(95, 7, _txt(" Elemento (EPP)"), border=1)
+    pdf.cell(25, 7, _txt("Cantidad"), border=1, align="C")
+    pdf.cell(30, 7, _txt("Talla"), border=1, align="C")
+    pdf.cell(40, 7, _txt("Motivo"), border=1, align="C", ln=True)
+
+    pdf.set_font("Helvetica", "", 9)
     for d in entrega["entrega_detalle"]:
         nombre_epp = d["epp_catalogo"]["nombre"]
         talla = d["talla"] or "-"
-        pdf.cell(95, 7, f" {nombre_epp[:48]}", border=1)
+        pdf.cell(95, 7, _txt(f" {nombre_epp[:48]}"), border=1)
         pdf.cell(25, 7, str(d["cantidad"]), border=1, align="C")
-        pdf.cell(30, 7, talla, border=1, align="C")
-        pdf.cell(40, 7, d["motivo"], border=1, align="C", ln=True)
-    pdf.ln(5)
+        pdf.cell(30, 7, _txt(talla), border=1, align="C")
+        pdf.cell(40, 7, _txt(d["motivo"]), border=1, align="C", ln=True)
+    pdf.ln(4)
 
-    # Observaciones
+    # Observaciones (si existen)
     if entrega.get("observaciones"):
-        pdf.set_font("Helvetica", "B", 9.5)
-        pdf.cell(0, 6, "Observaciones:", ln=True)
-        pdf.set_font("Helvetica", "", 9.5)
-        pdf.multi_cell(0, 6, entrega["observaciones"], border=1)
-        pdf.ln(5)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, _txt(" Observaciones:"), border="LTR", ln=True, fill=True)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.multi_cell(0, 5.5, _txt(f" {entrega['observaciones']}"), border="LBR")
+        pdf.ln(4)
 
-    # Declaración y Firmas
-    pdf.set_font("Helvetica", "I", 8.5)
-    pdf.multi_cell(
-        0, 4.5,
-        "Certifico que he recibido los elementos de protección personal descritos anteriormente en buen estado "
-        "y me comprometo a utilizarlos adecuadamente durante mi jornada laboral conforme a las normas de SST."
+    # 3. Compromiso y Responsabilidades del Trabajador
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(0, 6.5, _txt(" 3. COMPROMISO Y RESPONSABILIDADES DEL TRABAJADOR"), border=1, ln=True, fill=True)
+
+    texto_legal = (
+        "1. COMPROMISO DEL TRABAJADOR: Me comprometo a utilizar adecuadamente durante la jornada laboral "
+        "los elementos de protección personal, recibirlos y mantenerlos en buen estado, dando cumplimiento a las "
+        "políticas u responsabilidades que tengo con mi seguridad y salud en mi trabajo.\n"
+        "2. RESPONSABILIDADES DEL TRABAJADOR: Usando los equipos de protección personal estoy cumpliendo con mis "
+        "deberes como trabajador definidos en la ley a través de la siguiente normatividad: CODIGO SUSTANTIVO DEL "
+        "TRABAJO; Art. 56 y Art. 58, numeral 7; LEY 9 DE 1979; Art. 88."
     )
-    pdf.ln(8)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.multi_cell(0, 4.5, _txt(texto_legal), border=1, align="J")
+    pdf.ln(6)
+
+    # Bloque de firmas (si queda poco espacio al final de la página, salta limpiamente)
+    if pdf.get_y() > 235:
+        pdf.add_page()
 
     y_firma = pdf.get_y()
     if firma_bytes:
         img_stream = io.BytesIO(firma_bytes)
-        pdf.image(img_stream, x=25, y=y_firma, w=55, h=25)
+        pdf.image(img_stream, x=28, y=y_firma, w=55, h=24)
 
-    pdf.set_y(y_firma + 26)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.cell(95, 5, "_______________________________", align="C")
-    pdf.cell(95, 5, "_______________________________", align="C", ln=True)
-    pdf.cell(95, 5, f"Firma Trabajador ({trab['cedula']})", align="C")
-    pdf.cell(95, 5, f"Entregado por: {entrega['entregado_por']}", align="C", ln=True)
+    pdf.set_y(y_firma + 25)
+    pdf.set_font("Helvetica", "B", 8.5)
+    pdf.cell(95, 4.5, "________________________________________", align="C")
+    pdf.cell(95, 4.5, "________________________________________", align="C", ln=True)
+    pdf.cell(95, 4.5, _txt("FIRMA DEL TRABAJADOR"), align="C")
+    pdf.cell(95, 4.5, _txt("ENTREGADO POR"), align="C", ln=True)
+
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(95, 4.5, _txt(f"{trab['nombre']} · C.C. {trab['cedula']}"), align="C")
+    pdf.cell(95, 4.5, _txt(entrega["entregado_por"]), align="C", ln=True)
 
     return bytes(pdf.output())
 
