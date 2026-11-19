@@ -3,3 +3,4 @@ supabase
 pandas
 pillow
 streamlit-drawable-canvas-fix
+fpdf2
