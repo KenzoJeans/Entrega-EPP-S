@@ -289,36 +289,40 @@ def tab_registro():
                 st.error(err)
             return
 
-        payload = [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
+                payload = [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
         png = firma_a_png(lienzo.image_data)
         ruta = f"{datetime.now():%Y/%m}/{uuid.uuid4().hex}.png"
         subida = False
         guardado = False
-        try:
-            get_sb().storage.from_(BUCKET_FIRMAS).upload(
-                ruta, png, {"content-type": "image/png"}
-            )
-            subida = True
-            r = get_sb().rpc("registrar_entrega", {
-                "p_trabajador_id": trabajador["id"],
-                "p_entregado_por": entregado_por.strip(),
-                "p_observaciones": observaciones.strip() or None,
-                "p_items": payload,
-                "p_firma_path": ruta,
-            }).execute()
-            st.session_state["ok_msg"] = (
-                f"✅ Entrega #{r.data} registrada para {trabajador['nombre']}."
-            )
-            guardado = True
-        except Exception as ex:
-            st.error(f"No se pudo guardar: {ex}")
-            if subida and not guardado:
-                try:  # evita dejar una firma huérfana en el bucket
-                    get_sb().storage.from_(BUCKET_FIRMAS).remove([ruta])
-                except Exception:
-                    pass
+        with st.spinner("Guardando entrega..."):
+            try:
+                get_sb().storage.from_(BUCKET_FIRMAS).upload(
+                    ruta, png, {"content-type": "image/png"}
+                )
+                subida = True
+                r = get_sb().rpc("registrar_entrega", {
+                    "p_trabajador_id": trabajador["id"],
+                    "p_entregado_por": entregado_por.strip(),
+                    "p_observaciones": observaciones.strip() or None,
+                    "p_items": payload,
+                    "p_firma_path": ruta,
+                }).execute()
+                st.session_state["ok_msg"] = (
+                    f"✅ Entrega #{r.data} registrada para {trabajador['nombre']}."
+                )
+                guardado = True
+            except Exception as ex:
+                st.error(f"No se pudo guardar: {ex}")
+                if subida and not guardado:
+                    try:  # evita dejar una firma huérfana en el bucket
+                        get_sb().storage.from_(BUCKET_FIRMAS).remove([ruta])
+                    except Exception:
+                        pass
 
         if guardado:
+            cargar_detalle.clear()
+            cargar_cobertura.clear()
+            cargar_reposicion.clear()
             st.session_state["form_n"] = n + 1
             st.rerun()
 
