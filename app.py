@@ -1,7 +1,6 @@
 import hmac
 import io
 import os
-import re
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
@@ -22,6 +21,10 @@ COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
 BUCKET_FIRMAS = "firmas-epp"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+# Datos del formato oficial (cámbialos aquí cuando SST actualice el formato)
+CODIGO_FORMATO = "SST-HI-ED-FO-04"
+VERSION_FORMATO = "2"
+
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
 ROLES_ENTREGA = [
     "Brigadista",
@@ -31,6 +34,7 @@ ROLES_ENTREGA = [
     "Líder de Gestión Ambiental",
     "Analista de Gestión Ambiental",
 ]
+
 
 # ---------- Conexión ----------
 @st.cache_resource
@@ -103,6 +107,8 @@ def buscar_trabajadores(texto):
     if len(t) < 3:
         return []
     return [w for w in cargar_activos() if t in w["_busq"]][:20]
+
+
 
 
 def firma_a_png(image_data):
@@ -327,63 +333,7 @@ def tab_registro():
             st.rerun()
 
 
-# ---------- Pestaña 2: historial ----------
-def tab_historial():
-    st.subheader("Últimas 50 entregas")
-    r = (
-        get_sb().table("entregas")
-        .select(
-            "id,fecha_hora,entregado_por,firma_path,"
-            "trabajadores(nombre,cedula),"
-            "entrega_detalle(cantidad,talla,motivo,epp_catalogo(nombre))"
-        )
-        .order("fecha_hora", desc=True)
-        .limit(50)
-        .execute()
-    )
-    filas = []
-    firmas = {}
-    for e in r.data:
-        firmas[e["id"]] = e.get("firma_path")
-        fecha = (
-            pd.to_datetime(e["fecha_hora"], utc=True)
-            .tz_convert("America/Bogota")
-            .strftime("%Y-%m-%d %H:%M")
-        )
-        for d in e["entrega_detalle"]:
-            filas.append({
-                "Entrega": e["id"],
-                "Fecha": fecha,
-                "Trabajador": e["trabajadores"]["nombre"],
-                "Cédula": e["trabajadores"]["cedula"],
-                "EPP": d["epp_catalogo"]["nombre"],
-                "Cant.": d["cantidad"],
-                "Talla": d["talla"],
-                "Motivo": d["motivo"],
-                "Entregó": e["entregado_por"],
-            })
-
-    if not filas:
-        st.info("Todavía no hay entregas registradas.")
-        return
-
-    st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
-
-    st.markdown("**Ver firma de una entrega**")
-    elegida = st.selectbox("Entrega", list(firmas), format_func=lambda i: f"Entrega #{i}")
-    ruta = firmas.get(elegida)
-    if ruta:
-        try:
-            res = get_sb().storage.from_(BUCKET_FIRMAS).create_signed_url(ruta, 300)
-            url = res.get("signedURL") or res.get("signedUrl")
-            st.image(url, width=260)
-        except Exception as ex:
-            st.warning(f"No se pudo cargar la firma: {ex}")
-    else:
-        st.caption("Esta entrega no tiene firma.")
-
 # ---------- Generador de Acta PDF con Firma ----------
-from fpdf import FPDF
 
 
 def _txt(texto):
@@ -444,10 +394,10 @@ class ActaEPP(FPDF):
 
         self.set_font("Helvetica", "B", 7.5)
         self.set_xy(153, y_inicio + 1.5)
-        self.cell(46, 5, _txt("Código: SST-HI-ED-FO-04"), align="L")
+        self.cell(46, 5, _txt(f"Código: {CODIGO_FORMATO}"), align="L")
 
         self.set_xy(153, y_inicio + 9.5)
-        self.cell(46, 5, _txt("Versión: 2"), align="L")
+        self.cell(46, 5, _txt(f"Versión: {VERSION_FORMATO}"), align="L")
 
         self.set_xy(153, y_inicio + 17.5)
         self.set_font("Helvetica", "", 7.5)
@@ -529,7 +479,7 @@ def generar_acta_pdf(entrega, firma_bytes=None):
     texto_legal = (
         "1. COMPROMISO DEL TRABAJADOR: Me comprometo a utilizar adecuadamente durante la jornada laboral "
         "los elementos de protección personal, recibirlos y mantenerlos en buen estado, dando cumplimiento a las "
-        "políticas u responsabilidades que tengo con mi seguridad y salud en mi trabajo.\n"
+        "políticas y responsabilidades que tengo con mi seguridad y salud en mi trabajo.\n"
         "2. RESPONSABILIDADES DEL TRABAJADOR: Usando los equipos de protección personal estoy cumpliendo con mis "
         "deberes como trabajador definidos en la ley a través de la siguiente normatividad: CODIGO SUSTANTIVO DEL "
         "TRABAJO; Art. 56 y Art. 58, numeral 7; LEY 9 DE 1979; Art. 88."
@@ -545,7 +495,7 @@ def generar_acta_pdf(entrega, firma_bytes=None):
     y_firma = pdf.get_y()
     if firma_bytes:
         img_stream = io.BytesIO(firma_bytes)
-        pdf.image(img_stream, x=28, y=y_firma, w=55, h=24)
+        pdf.image(img_stream, x=33, y=y_firma, w=48, h=24)
 
     pdf.set_y(y_firma + 25)
     pdf.set_font("Helvetica", "B", 8.5)
@@ -559,6 +509,7 @@ def generar_acta_pdf(entrega, firma_bytes=None):
     pdf.cell(95, 4.5, _txt(entrega["entregado_por"]), align="C", ln=True)
 
     return bytes(pdf.output())
+
 
 # ---------- Datos para historial y KPIs ----------
 MAPA_DETALLE = {
@@ -722,7 +673,9 @@ def tab_historial():
         int(r.entrega_id): f"Entrega #{int(r.entrega_id)} · {r.trabajador} ({r.fecha_hora_local})"
         for r in actas.itertuples()
     }
-    elegida = st.selectbox("Selecciona una entrega", list(etiquetas), format_func=lambda i: etiquetas[i])
+    elegida = st.selectbox(
+        "Selecciona una entrega", list(etiquetas), format_func=lambda i: etiquetas[i]
+    )
     try:
         pdf_bytes, firma, cedula = acta_bytes(elegida)
     except Exception as ex:
@@ -744,25 +697,7 @@ def tab_historial():
             type="primary",
             use_container_width=True,
         )
-# ---------- Programa principal ----------
-if not check_password():
-    st.stop()
 
-encabezado()
-cargar_activos()   # precarga: las búsquedas quedan instantáneas
-cargar_catalogo()
-
-VISTAS = ["Registrar entrega", "Historial y Actas", "Control (KPIs)"]
-vista = st.segmented_control(
-    "Vista", VISTAS, default=VISTAS[0], key="vista", label_visibility="collapsed"
-) or VISTAS[0]
-
-if vista == VISTAS[0]:
-    tab_registro()
-elif vista == VISTAS[1]:
-    tab_historial()
-else:
-    tab_kpis()
 
 # ---------- Vista 3: control (KPIs) ----------
 def barras(serie, titulo, horizontal=False):
@@ -830,7 +765,7 @@ def tab_kpis():
     else:
         rep = rep.assign(sucursal=rep["sucursal"].fillna("Sin sucursal"))
         if suc != "Todas":
-            rep = rep[rep["sucursal"] == suc]
+            rep = rep[rep["sucursal"] == suc].copy()
         hoy = pd.Timestamp.now(tz="America/Bogota").date()
         rep["vence"] = pd.to_datetime(rep["vence"], utc=True).dt.tz_convert("America/Bogota").dt.date
         rep["dias"] = rep["vence"].map(lambda d: (d - hoy).days)
@@ -846,8 +781,7 @@ def tab_kpis():
             st.success("No hay reposiciones vencidas ni próximas a vencer.")
         else:
             st.dataframe(tabla, hide_index=True, use_container_width=True)
-            tabla_x = tabla.assign(Vence=tabla["Vence"].astype(str))
-            hojas["Reposiciones"] = tabla_x
+            hojas["Reposiciones"] = tabla.assign(Vence=tabla["Vence"].astype(str))
 
     # --- 3. Actividad del período ---
     st.markdown("### Actividad del período")
@@ -882,15 +816,19 @@ def tab_kpis():
 
                 g1, g2 = st.columns(2)
                 with g1:
-                    barras(per.groupby("epp")["cantidad"].sum().sort_values(ascending=False).head(10),
-                           "Top 10 EPP entregados", horizontal=True)
+                    barras(
+                        per.groupby("epp")["cantidad"].sum().sort_values(ascending=False).head(10),
+                        "Top 10 EPP entregados", horizontal=True,
+                    )
                 with g2:
                     det_epp = per[per["motivo"] == "DETERIORO"].groupby("epp")["cantidad"].sum()
                     if det_epp.empty:
                         st.info("Sin entregas por deterioro en el período.")
                     else:
-                        barras(det_epp.sort_values(ascending=False).head(8),
-                               "EPP con más deterioro", horizontal=True)
+                        barras(
+                            det_epp.sort_values(ascending=False).head(8),
+                            "EPP con más deterioro", horizontal=True,
+                        )
 
                 g3, g4 = st.columns(2)
                 with g3:
@@ -902,8 +840,10 @@ def tab_kpis():
                         ratio = (u_suc / activos_suc).dropna().round(2).sort_values(ascending=False)
                         barras(ratio, "Unidades por trabajador activo")
                     else:
-                        barras(per.groupby("categoria")["cantidad"].sum().sort_values(ascending=False),
-                               "Unidades por categoría")
+                        barras(
+                            per.groupby("categoria")["cantidad"].sum().sort_values(ascending=False),
+                            "Unidades por categoría",
+                        )
 
                 hojas["Detalle"] = per[list(MAPA_DETALLE)].rename(columns=MAPA_DETALLE)
                 hojas["Por EPP"] = (
@@ -921,101 +861,22 @@ def tab_kpis():
     )
 
 
-# ---------- Pestaña 3: KPIs e Indicadores ----------
-@st.cache_data(ttl=120)
-def cargar_datos_kpi():
-    r = (
-        get_sb().table("entregas")
-        .select(
-            "id,fecha_hora,entregado_por,"
-            "trabajadores(nombre,cedula,cargo,sucursal),"
-            "entrega_detalle(cantidad,talla,motivo,epp_catalogo(nombre,categoria))"
-        )
-        .order("fecha_hora", desc=True)
-        .execute()
-    )
-    registros = []
-    for e in r.data:
-        dt = pd.to_datetime(e["fecha_hora"], utc=True).tz_convert("America/Bogota")
-        trab = e.get("trabajadores") or {}
-        for d in e.get("entrega_detalle") or []:
-            epp = d.get("epp_catalogo") or {}
-            registros.append({
-                "entrega_id": e["id"],
-                "fecha": dt.date(),
-                "mes": dt.strftime("%Y-%m"),
-                "trabajador": trab.get("nombre", "N/A"),
-                "cedula": trab.get("cedula", "N/A"),
-                "cargo": trab.get("cargo") or "Sin cargo",
-                "sucursal": trab.get("sucursal") or "Sin sucursal",
-                "epp": epp.get("nombre", "N/A"),
-                "categoria": epp.get("categoria") or "Otros",
-                "cantidad": d["cantidad"],
-                "motivo": d["motivo"],
-            })
-    return pd.DataFrame(registros)
+# ---------- Programa principal ----------
+if not check_password():
+    st.stop()
 
+encabezado()
+cargar_activos()   # precarga: las búsquedas quedan instantáneas
+cargar_catalogo()
 
-def tab_kpis():
-    st.subheader("Indicadores de Gestión de EPP")
-    df = cargar_datos_kpi()
-    if df.empty:
-        st.info("No hay datos suficientes para calcular indicadores.")
-        return
+VISTAS = ["Registrar entrega", "Historial y Actas", "Control (KPIs)"]
+vista = st.segmented_control(
+    "Vista", VISTAS, default=VISTAS[0], key="vista", label_visibility="collapsed"
+) or VISTAS[0]
 
-    # Filtros superiores
-    c1, c2, c3 = st.columns(3)
-    min_f, max_f = df["fecha"].min(), df["fecha"].max()
-    rango = c1.date_input("Rango de fechas", value=(min_f, max_f), min_value=min_f, max_value=max_f)
-    sucursales = ["Todas"] + sorted(df["sucursal"].unique().tolist())
-    suc_sel = c2.selectbox("Sucursal", sucursales)
-    motivos_sel = c3.multiselect("Motivo", MOTIVOS, default=MOTIVOS)
-
-    if isinstance(rango, tuple) and len(rango) == 2:
-        df = df[(df["fecha"] >= rango[0]) & (df["fecha"] <= rango[1])]
-    if suc_sel != "Todas":
-        df = df[df["sucursal"] == suc_sel]
-    if motivos_sel:
-        df = df[df["motivo"].isin(motivos_sel)]
-
-    if df.empty:
-        st.warning("No hay registros con los filtros seleccionados.")
-        return
-
-    # KPIs principales
-    total_unidades = int(df["cantidad"].sum())
-    total_actas = df["entrega_id"].nunique()
-    trabajadores_unicos = df["cedula"].nunique()
-    unid_deterioro = int(df.loc[df["motivo"] == "DETERIORO", "cantidad"].sum())
-    tasa_deterioro = (unid_deterioro / total_unidades * 100) if total_unidades else 0
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("EPPs entregados", f"{total_unidades:,}")
-    k2.metric("Actas firmadas", f"{total_actas:,}")
-    k3.metric("Trabajadores dotados", f"{trabajadores_unicos:,}")
-    k4.metric("% por Deterioro", f"{tasa_deterioro:.1f}%")
-
-    st.markdown("---")
-
-    # Gráficos
-    g1, g2 = st.columns(2)
-    with g1:
-        st.markdown("**Top 10 EPPs más entregados**")
-        top_epp = df.groupby("epp")["cantidad"].sum().sort_values(ascending=False).head(10)
-        st.bar_chart(top_epp, horizontal=True)
-
-    with g2:
-        st.markdown("**Entregas por Motivo**")
-        por_motivo = df.groupby("motivo")["cantidad"].sum()
-        st.bar_chart(por_motivo)
-
-    g3, g4 = st.columns(2)
-    with g3:
-        st.markdown("**Consumo por Sucursal**")
-        por_suc = df.groupby("sucursal")["cantidad"].sum().sort_values(ascending=False)
-        st.bar_chart(por_suc)
-
-    with g4:
-        st.markdown("**Evolución Mensual (Unidades)**")
-        por_mes = df.groupby("mes")["cantidad"].sum().sort_index()
-        st.line_chart(por_mes)
+if vista == VISTAS[0]:
+    tab_registro()
+elif vista == VISTAS[1]:
+    tab_historial()
+else:
+    tab_kpis()
