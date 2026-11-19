@@ -382,7 +382,7 @@ class ActaEPP(FPDF):
         # Columna 1: Logo (x=10 a 50)
         self.rect(10, y_inicio, 40, alto_hdr)
         if os.path.exists(LOGO_NEGRO):
-            self.image(LOGO_NEGRO, x=13, y=y_inicio, w=34)
+            self.image(LOGO_NEGRO, x=13, y=y_inicio, w=24)
 
         # Columna 2: Razón Social, Título y Datos Corporativos (x=50 a 152)
         self.rect(50, y_inicio, 102, alto_hdr)
