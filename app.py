@@ -1,15 +1,22 @@
 import hmac
+import io
 import os
 import re
+import uuid
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
+from streamlit_drawable_canvas import st_canvas
 from supabase import create_client
 
-st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="wide")
+st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="centered")
 
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
 LOGO = "logo.png"
+COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
+BUCKET_FIRMAS = "firmas-epp"
 
 
 # ---------- Conexión ----------
@@ -19,6 +26,12 @@ def get_sb():
 
 
 # ---------- Acceso con contraseña ----------
+def encabezado():
+    if os.path.exists(LOGO):
+        st.image(LOGO, width=140)
+    st.title("Entrega de EPP")
+
+
 def check_password():
     if st.session_state.get("auth_ok"):
         return True
@@ -33,18 +46,12 @@ def check_password():
     return False
 
 
-def encabezado():
-    if os.path.exists(LOGO):
-        st.image(LOGO, width=140)
-    st.title("Entrega de EPP")
-
-
 # ---------- Datos ----------
 @st.cache_data(ttl=300)
 def cargar_catalogo():
     r = (
         get_sb().table("epp_catalogo")
-        .select("id,nombre,requiere_talla,imagen_url")
+        .select("id,nombre,categoria,requiere_talla,imagen_url")
         .eq("activo", True)
         .order("nombre")
         .execute()
@@ -68,6 +75,45 @@ def buscar_trabajadores(texto):
     return r.data
 
 
+def firma_a_png(image_data):
+    img = Image.fromarray(image_data.astype("uint8"), "RGBA")
+    fondo = Image.new("RGB", img.size, (255, 255, 255))
+    fondo.paste(img, mask=img.split()[3])
+    buf = io.BytesIO()
+    fondo.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+# ---------- Selector de EPP con imágenes ----------
+def css_grid():
+    ancho = f"calc({100 / COLUMNAS:.2f}% - 0.6rem)"
+    return f"""
+    <style>
+    .st-key-grid_epp [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap; gap: 0.5rem; }}
+    .st-key-grid_epp [data-testid="stColumn"],
+    .st-key-grid_epp [data-testid="column"] {{
+        min-width: {ancho} !important;
+        flex: 1 1 {ancho} !important;
+    }}
+    .st-key-grid_epp button {{ min-height: 2.8rem; height: auto; padding: 0.25rem 0.4rem; }}
+    .st-key-grid_epp button p {{ white-space: normal; line-height: 1.15; font-size: 0.8rem; }}
+    </style>
+    """
+
+
+def imagen_html(url):
+    estilo = (
+        "width:100%;max-width:160px;aspect-ratio:1/1;margin:0 auto 0.25rem auto;"
+        "border-radius:10px;display:block;"
+    )
+    if url:
+        return f'<img src="{url}" style="{estilo}object-fit:contain;background:#fff;">'
+    return (
+        f'<div style="{estilo}display:flex;align-items:center;justify-content:center;'
+        'background:#1A1F2B;font-size:2.2rem;">🦺</div>'
+    )
+
+
 def alternar(clave, epp_id):
     sel = st.session_state[clave]
     if epp_id in sel:
@@ -76,47 +122,19 @@ def alternar(clave, epp_id):
         sel.append(epp_id)
 
 
-CSS_GRID = """
-<style>
-.st-key-grid_epp [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
-.st-key-grid_epp [data-testid="stColumn"],
-.st-key-grid_epp [data-testid="column"] {
-    min-width: calc(50% - 1rem) !important;
-    flex: 1 1 calc(50% - 1rem) !important;
-}
-.st-key-grid_epp img {
-    aspect-ratio: 1 / 1;
-    object-fit: contain;
-    background: #ffffff;
-    border-radius: 12px;
-    max-width: 220px;
-    width: 100%;
-    margin: 0 auto;
-    display: block;
-}
-.st-key-grid_epp button { min-height: 3.4rem; height: auto; }
-.st-key-grid_epp button p { white-space: normal; line-height: 1.2; }
-.placeholder-epp {
-    aspect-ratio: 1 / 1; max-width: 220px; margin: 0 auto;
-    display: flex; align-items: center; justify-content: center;
-    background: #1A1F2B; border-radius: 12px; font-size: 3rem;
-}
-</style>
-"""
-
-
 def selector_epp(catalogo, n):
     clave = f"sel{n}"
     st.session_state.setdefault(clave, [])
     seleccion = st.session_state[clave]
-    st.markdown(CSS_GRID, unsafe_allow_html=True)
+    st.markdown(css_grid(), unsafe_allow_html=True)
 
     categorias = ["Todas"] + sorted({e.get("categoria") or "Otros" for e in catalogo.values()})
     cat = st.pills("Categoría", categorias, default="Todas", key=f"cat{n}") or "Todas"
     buscar = st.text_input("Buscar EPP", key=f"bq{n}", placeholder="Ej: guantes, filtro...")
 
     if seleccion:
-        st.caption("Seleccionados: " + ", ".join(catalogo[i]["nombre"] for i in seleccion))
+        nombres = [catalogo[i]["nombre"] for i in seleccion if i in catalogo]
+        st.caption("Seleccionados: " + ", ".join(nombres))
 
     lista = [
         e for e in catalogo.values()
@@ -127,14 +145,11 @@ def selector_epp(catalogo, n):
         st.info("No hay EPP con ese filtro.")
 
     with st.container(key="grid_epp"):
-        for k in range(0, len(lista), 2):
-            cols = st.columns(2)
-            for col, e in zip(cols, lista[k:k + 2]):
+        for k in range(0, len(lista), COLUMNAS):
+            cols = st.columns(COLUMNAS)
+            for col, e in zip(cols, lista[k:k + COLUMNAS]):
                 with col:
-                    if e.get("imagen_url"):
-                        st.image(e["imagen_url"], use_container_width=True)
-                    else:
-                        st.markdown('<div class="placeholder-epp">🦺</div>', unsafe_allow_html=True)
+                    st.markdown(imagen_html(e.get("imagen_url")), unsafe_allow_html=True)
                     marcado = e["id"] in seleccion
                     st.button(
                         ("✓ " if marcado else "") + e["nombre"],
@@ -146,9 +161,10 @@ def selector_epp(catalogo, n):
                     )
     return seleccion
 
+
 # ---------- Pestaña 1: registrar ----------
 def tab_registro():
-    n = st.session_state.setdefault("form_n", 0)
+    n = st.session_state.setdefault("form_n", 0)  # cambia para limpiar el formulario
 
     msg = st.session_state.pop("ok_msg", None)
     if msg:
@@ -181,7 +197,9 @@ def tab_registro():
     elegidos = selector_epp(catalogo, n)
     items = []
     for i in elegidos:
-        e = catalogo[i]
+        e = catalogo.get(i)
+        if e is None:
+            continue
         st.markdown(f"**{e['nombre']}**")
         c1, c2, c3 = st.columns(3)
         cantidad = c1.number_input("Cantidad", 1, 50, 1, key=f"c{i}_{n}")
@@ -201,6 +219,21 @@ def tab_registro():
     entregado_por = st.text_input("Entregado por", key=f"ep{n}")
     observaciones = st.text_area("Observaciones (opcional)", key=f"ob{n}")
 
+    # 4. Firma
+    st.subheader("4. Firma del trabajador")
+    st.caption("El trabajador firma con el dedo dentro del recuadro.")
+    lienzo = st_canvas(
+        stroke_width=3,
+        stroke_color="#000000",
+        background_color="#FFFFFF",
+        height=160,
+        width=320,
+        drawing_mode="freedraw",
+        display_toolbar=True,
+        key=f"firma{n}",
+    )
+    firmado = bool(lienzo.json_data and lienzo.json_data.get("objects"))
+
     if st.button("Guardar entrega", type="primary", use_container_width=True):
         errores = []
         if trabajador is None:
@@ -212,6 +245,8 @@ def tab_registro():
         for it in items:
             if it["_requiere_talla"] and not it["talla"]:
                 errores.append(f"Falta la talla de {it['_nombre']}.")
+        if not firmado:
+            errores.append("Falta la firma del trabajador.")
 
         if errores:
             for err in errores:
@@ -219,13 +254,21 @@ def tab_registro():
             return
 
         payload = [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
+        png = firma_a_png(lienzo.image_data)
+        ruta = f"{datetime.now():%Y/%m}/{uuid.uuid4().hex}.png"
+        subida = False
         guardado = False
         try:
+            get_sb().storage.from_(BUCKET_FIRMAS).upload(
+                ruta, png, {"content-type": "image/png"}
+            )
+            subida = True
             r = get_sb().rpc("registrar_entrega", {
                 "p_trabajador_id": trabajador["id"],
                 "p_entregado_por": entregado_por.strip(),
                 "p_observaciones": observaciones.strip() or None,
                 "p_items": payload,
+                "p_firma_path": ruta,
             }).execute()
             st.session_state["ok_msg"] = (
                 f"✅ Entrega #{r.data} registrada para {trabajador['nombre']}."
@@ -233,6 +276,11 @@ def tab_registro():
             guardado = True
         except Exception as ex:
             st.error(f"No se pudo guardar: {ex}")
+            if subida and not guardado:
+                try:  # evita dejar una firma huérfana en el bucket
+                    get_sb().storage.from_(BUCKET_FIRMAS).remove([ruta])
+                except Exception:
+                    pass
 
         if guardado:
             st.session_state["form_n"] = n + 1
@@ -245,7 +293,7 @@ def tab_historial():
     r = (
         get_sb().table("entregas")
         .select(
-            "id,fecha_hora,entregado_por,"
+            "id,fecha_hora,entregado_por,firma_path,"
             "trabajadores(nombre,cedula),"
             "entrega_detalle(cantidad,talla,motivo,epp_catalogo(nombre))"
         )
@@ -254,7 +302,9 @@ def tab_historial():
         .execute()
     )
     filas = []
+    firmas = {}
     for e in r.data:
+        firmas[e["id"]] = e.get("firma_path")
         fecha = (
             pd.to_datetime(e["fecha_hora"], utc=True)
             .tz_convert("America/Bogota")
@@ -272,10 +322,25 @@ def tab_historial():
                 "Motivo": d["motivo"],
                 "Entregó": e["entregado_por"],
             })
-    if filas:
-        st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
-    else:
+
+    if not filas:
         st.info("Todavía no hay entregas registradas.")
+        return
+
+    st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
+
+    st.markdown("**Ver firma de una entrega**")
+    elegida = st.selectbox("Entrega", list(firmas), format_func=lambda i: f"Entrega #{i}")
+    ruta = firmas.get(elegida)
+    if ruta:
+        try:
+            res = get_sb().storage.from_(BUCKET_FIRMAS).create_signed_url(ruta, 300)
+            url = res.get("signedURL") or res.get("signedUrl")
+            st.image(url, width=260)
+        except Exception as ex:
+            st.warning(f"No se pudo cargar la firma: {ex}")
+    else:
+        st.caption("Esta entrega no tiene firma.")
 
 
 # ---------- Programa principal ----------
