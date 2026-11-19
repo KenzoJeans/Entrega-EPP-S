@@ -346,6 +346,82 @@ def tab_historial():
     else:
         st.caption("Esta entrega no tiene firma.")
 
+# ---------- Generador de Acta PDF con Firma ----------
+def generar_acta_pdf(entrega, firma_bytes=None):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # Encabezado con Logo
+    if os.path.exists(LOGO):
+        pdf.image(LOGO, x=10, y=10, w=32)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, "ACTA DE ENTREGA DE ELEMENTOS DE PROTECCIÓN PERSONAL", ln=True, align="R")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, f"Registro N.° {entrega['id']}  |  Fecha: {entrega['fecha_local']}", ln=True, align="R")
+    pdf.ln(12)
+
+    # Datos del trabajador
+    trab = entrega["trabajadores"]
+    pdf.set_fill_color(240, 242, 246)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 7, " 1. DATOS DEL TRABAJADOR", ln=True, fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(100, 7, f"Nombre: {trab['nombre']}", border=1)
+    pdf.cell(90, 7, f"Cédula: {trab['cedula']}", border=1, ln=True)
+    pdf.cell(100, 7, f"Cargo: {trab.get('cargo') or 'N/A'}", border=1)
+    pdf.cell(90, 7, f"Sucursal: {trab.get('sucursal') or 'N/A'}", border=1, ln=True)
+    pdf.ln(6)
+
+    # Tabla de EPPs entregados
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 7, " 2. ELEMENTOS ENTREGADOS", ln=True, fill=True)
+    pdf.cell(95, 7, "Elemento (EPP)", border=1)
+    pdf.cell(25, 7, "Cant.", border=1, align="C")
+    pdf.cell(30, 7, "Talla", border=1, align="C")
+    pdf.cell(40, 7, "Motivo", border=1, align="C", ln=True)
+
+    pdf.set_font("Helvetica", "", 9.5)
+    for d in entrega["entrega_detalle"]:
+        nombre_epp = d["epp_catalogo"]["nombre"]
+        talla = d["talla"] or "-"
+        pdf.cell(95, 7, f" {nombre_epp[:48]}", border=1)
+        pdf.cell(25, 7, str(d["cantidad"]), border=1, align="C")
+        pdf.cell(30, 7, talla, border=1, align="C")
+        pdf.cell(40, 7, d["motivo"], border=1, align="C", ln=True)
+    pdf.ln(5)
+
+    # Observaciones
+    if entrega.get("observaciones"):
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.cell(0, 6, "Observaciones:", ln=True)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.multi_cell(0, 6, entrega["observaciones"], border=1)
+        pdf.ln(5)
+
+    # Declaración y Firmas
+    pdf.set_font("Helvetica", "I", 8.5)
+    pdf.multi_cell(
+        0, 4.5,
+        "Certifico que he recibido los elementos de protección personal descritos anteriormente en buen estado "
+        "y me comprometo a utilizarlos adecuadamente durante mi jornada laboral conforme a las normas de SST."
+    )
+    pdf.ln(8)
+
+    y_firma = pdf.get_y()
+    if firma_bytes:
+        img_stream = io.BytesIO(firma_bytes)
+        pdf.image(img_stream, x=25, y=y_firma, w=55, h=25)
+
+    pdf.set_y(y_firma + 26)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(95, 5, "_______________________________", align="C")
+    pdf.cell(95, 5, "_______________________________", align="C", ln=True)
+    pdf.cell(95, 5, f"Firma Trabajador ({trab['cedula']})", align="C")
+    pdf.cell(95, 5, f"Entregado por: {entrega['entregado_por']}", align="C", ln=True)
+
+    return bytes(pdf.output())
+
 
 # ---------- Programa principal ----------
 if not check_password():
