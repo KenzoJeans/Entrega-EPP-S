@@ -560,81 +560,368 @@ def generar_acta_pdf(entrega, firma_bytes=None):
 
     return bytes(pdf.output())
 
-# ---------- Pestaña 2: historial + descarga PDF ----------
-def tab_historial():
-    st.subheader("Últimas 50 entregas")
-    r = (
+# ---------- Datos para historial y KPIs ----------
+MAPA_DETALLE = {
+    "entrega_id": "Entrega", "fecha_hora_local": "Fecha", "cedula": "Cédula",
+    "trabajador": "Trabajador", "cargo": "Cargo", "sucursal": "Sucursal",
+    "epp": "EPP", "categoria": "Categoría", "cantidad": "Cant.", "talla": "Talla",
+    "motivo": "Motivo", "entregado_por": "Entregó",
+}
+
+
+def traer_todo(fabrica, tam=1000):
+    """Pide los datos por páginas para superar el tope de 1000 filas."""
+    filas, desde = [], 0
+    while True:
+        r = fabrica().range(desde, desde + tam - 1).execute()
+        filas += r.data
+        if len(r.data) < tam:
+            break
+        desde += tam
+    return filas
+
+
+@st.cache_data(ttl=120, show_spinner="Cargando datos...")
+def cargar_detalle():
+    filas = traer_todo(
+        lambda: get_sb().table("v_entregas_detalle").select("*").order("detalle_id")
+    )
+    df = pd.DataFrame(filas)
+    if df.empty:
+        return df
+    df["fecha"] = pd.to_datetime(df["fecha"]).dt.date
+    df["mes"] = pd.to_datetime(df["fecha"]).dt.strftime("%Y-%m")
+    df["fecha_hora_local"] = (
+        pd.to_datetime(df["fecha_hora"], utc=True)
+        .dt.tz_convert("America/Bogota")
+        .dt.strftime("%Y-%m-%d %H:%M")
+    )
+    df["cargo"] = df["cargo"].fillna("Sin cargo")
+    df["sucursal"] = df["sucursal"].fillna("Sin sucursal")
+    df["categoria"] = df["categoria"].fillna("Otros")
+    return df
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_cobertura():
+    filas = traer_todo(
+        lambda: get_sb().table("v_cobertura").select("*").order("trabajador_id")
+    )
+    df = pd.DataFrame(filas)
+    if not df.empty:
+        df["sucursal"] = df["sucursal"].fillna("Sin sucursal")
+    return df
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cargar_reposicion():
+    filas = traer_todo(
+        lambda: get_sb().table("v_reposicion").select("*")
+        .order("trabajador_id").order("epp")
+    )
+    return pd.DataFrame(filas)
+
+
+def a_excel(hojas):
+    """Convierte {nombre_hoja: DataFrame} en un .xlsx con formato."""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
+        encabezado_fmt = xl.book.add_format({
+            "bold": True, "bg_color": "#1F7A3D", "font_color": "#FFFFFF",
+            "border": 1, "valign": "vcenter",
+        })
+        for nombre, df in hojas.items():
+            hoja = nombre[:31]
+            df.to_excel(xl, sheet_name=hoja, index=False)
+            ws = xl.sheets[hoja]
+            for j, col in enumerate(df.columns):
+                ws.write(0, j, col, encabezado_fmt)
+                largo = df[col].astype(str).str.len().max() if len(df) else 0
+                ws.set_column(j, j, min(max(len(str(col)), largo) + 2, 45))
+            ws.freeze_panes(1, 0)
+            if len(df):
+                ws.autofilter(0, 0, len(df), len(df.columns) - 1)
+    return buf.getvalue()
+
+
+@st.cache_data(ttl=3600, show_spinner="Generando acta...")
+def acta_bytes(entrega_id):
+    e = (
         get_sb().table("entregas")
         .select(
             "id,fecha_hora,entregado_por,observaciones,firma_path,"
             "trabajadores(nombre,cedula,cargo,sucursal),"
             "entrega_detalle(cantidad,talla,motivo,epp_catalogo(nombre))"
         )
-        .order("fecha_hora", desc=True)
-        .limit(50)
+        .eq("id", entrega_id)
+        .single()
         .execute()
+        .data
     )
-    if not r.data:
+    e["fecha_local"] = (
+        pd.to_datetime(e["fecha_hora"], utc=True)
+        .tz_convert("America/Bogota")
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    firma = None
+    if e.get("firma_path"):  # si falla la descarga, no se guarda en caché
+        firma = get_sb().storage.from_(BUCKET_FIRMAS).download(e["firma_path"])
+    return generar_acta_pdf(e, firma), firma, e["trabajadores"]["cedula"]
+
+
+def rango_valido(rango):
+    return isinstance(rango, (tuple, list)) and len(rango) == 2
+
+
+# ---------- Vista 2: historial y actas ----------
+def tab_historial():
+    st.subheader("Historial y actas")
+    df = cargar_detalle()
+    if df.empty:
         st.info("Todavía no hay entregas registradas.")
         return
 
-    filas = []
-    entregas_map = {}
-    for e in r.data:
-        fecha = (
-            pd.to_datetime(e["fecha_hora"], utc=True)
-            .tz_convert("America/Bogota")
-            .strftime("%Y-%m-%d %H:%M")
-        )
-        e["fecha_local"] = fecha
-        entregas_map[e["id"]] = e
-        for d in e["entrega_detalle"]:
-            filas.append({
-                "Entrega": e["id"],
-                "Fecha": fecha,
-                "Trabajador": e["trabajadores"]["nombre"],
-                "Cédula": e["trabajadores"]["cedula"],
-                "EPP": d["epp_catalogo"]["nombre"],
-                "Cant.": d["cantidad"],
-                "Talla": d["talla"],
-                "Motivo": d["motivo"],
-                "Entregó": e["entregado_por"],
-            })
+    c1, c2 = st.columns(2)
+    min_f, max_f = df["fecha"].min(), df["fecha"].max()
+    rango = c1.date_input(
+        "Rango de fechas",
+        value=(max(min_f, max_f - timedelta(days=30)), max_f),
+        min_value=min_f, max_value=max_f, key="hist_rango",
+    )
+    texto = c2.text_input("Trabajador o cédula", key="hist_txt")
+    if not rango_valido(rango):
+        st.info("Selecciona la fecha inicial y la final.")
+        return
 
-    st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
+    v = df[(df["fecha"] >= rango[0]) & (df["fecha"] <= rango[1])]
+    if texto.strip():
+        t = normalizar(texto)
+        coincide = (
+            v["trabajador"].map(normalizar).str.contains(t, regex=False)
+            | v["cedula"].astype(str).str.contains(texto.strip(), regex=False)
+        )
+        v = v[coincide]
+    if v.empty:
+        st.warning("No hay entregas con esos filtros.")
+        return
+
+    vista = v[list(MAPA_DETALLE)].rename(columns=MAPA_DETALLE)
+    st.caption(f"{v['entrega_id'].nunique()} actas · {int(v['cantidad'].sum())} unidades")
+    st.dataframe(vista, use_container_width=True, hide_index=True)
+    st.download_button(
+        "⬇️ Descargar historial en Excel",
+        data=a_excel({"Historial": vista}),
+        file_name=f"Historial_EPP_{date.today():%Y%m%d}.xlsx",
+        mime=XLSX_MIME,
+    )
 
     st.markdown("---")
     st.markdown("**Detalle y descarga de acta firmada**")
-    elegida = st.selectbox(
-        "Selecciona una entrega",
-        list(entregas_map),
-        format_func=lambda i: f"Entrega #{i} · {entregas_map[i]['trabajadores']['nombre']} ({entregas_map[i]['fecha_local']})",
-    )
-    entrega_sel = entregas_map[elegida]
-    ruta = entrega_sel.get("firma_path")
+    actas = v.drop_duplicates("entrega_id").sort_values("entrega_id", ascending=False)
+    etiquetas = {
+        int(r.entrega_id): f"Entrega #{int(r.entrega_id)} · {r.trabajador} ({r.fecha_hora_local})"
+        for r in actas.itertuples()
+    }
+    elegida = st.selectbox("Selecciona una entrega", list(etiquetas), format_func=lambda i: etiquetas[i])
+    try:
+        pdf_bytes, firma, cedula = acta_bytes(elegida)
+    except Exception as ex:
+        st.warning(f"No se pudo generar el acta: {ex}")
+        return
 
-    col_img, col_pdf = st.columns([1, 1])
-    firma_bytes = None
+    col_img, col_pdf = st.columns(2)
     with col_img:
-        if ruta:
-            try:
-                firma_bytes = get_sb().storage.from_(BUCKET_FIRMAS).download(ruta)
-                st.image(firma_bytes, width=240, caption="Firma registrada")
-            except Exception as ex:
-                st.warning(f"No se pudo cargar la firma: {ex}")
+        if firma:
+            st.image(firma, width=240, caption="Firma registrada")
         else:
             st.caption("Esta entrega no tiene firma.")
-
     with col_pdf:
-        pdf_bytes = generar_acta_pdf(entrega_sel, firma_bytes)
         st.download_button(
-            label="📄 Descargar Acta en PDF",
+            "📄 Descargar Acta en PDF",
             data=pdf_bytes,
-            file_name=f"Acta_EPP_{entrega_sel['id']}_{entrega_sel['trabajadores']['cedula']}.pdf",
+            file_name=f"Acta_EPP_{elegida}_{cedula}.pdf",
             mime="application/pdf",
             type="primary",
             use_container_width=True,
         )
+
+
+# ---------- Vista 3: control (KPIs) ----------
+def barras(serie, titulo, horizontal=False):
+    d = serie.reset_index()
+    d.columns = ["Item", "Unidades"]
+    if horizontal:
+        fig = px.bar(d.sort_values("Unidades"), x="Unidades", y="Item", orientation="h", title=titulo)
+    else:
+        fig = px.bar(d, x="Item", y="Unidades", title=titulo)
+    fig.update_layout(
+        template="plotly_dark", height=320, xaxis_title=None, yaxis_title=None,
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def tab_kpis():
+    st.subheader("Control de EPP")
+    cob_all = cargar_cobertura()
+    if cob_all.empty:
+        st.info("No hay trabajadores activos cargados.")
+        return
+
+    suc = st.selectbox("Sucursal", ["Todas"] + sorted(cob_all["sucursal"].unique()), key="kpi_suc")
+    cob = cob_all if suc == "Todas" else cob_all[cob_all["sucursal"] == suc]
+
+    # --- 1. Cobertura ---
+    st.markdown("### Cobertura de dotación")
+    activos = len(cob)
+    dotados = int((cob["entregas"] > 0).sum())
+    pct = dotados / activos * 100 if activos else 0
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Trabajadores activos", f"{activos:,}")
+    k2.metric("Con entrega registrada", f"{dotados:,}")
+    k3.metric("Cobertura", f"{pct:.1f}%")
+    st.progress(min(pct / 100, 1.0))
+    st.caption("Mide el avance del registro en el sistema: trabajadores activos con al menos una entrega.")
+
+    por_suc = (
+        cob.groupby("sucursal")
+        .agg(Activos=("trabajador_id", "count"), Dotados=("entregas", lambda s: int((s > 0).sum())))
+        .reset_index()
+    )
+    por_suc["Cobertura %"] = (por_suc["Dotados"] / por_suc["Activos"] * 100).round(1)
+    por_suc = por_suc.sort_values("Cobertura %").rename(columns={"sucursal": "Sucursal"})
+    st.dataframe(por_suc, hide_index=True, use_container_width=True)
+
+    sin_dot = (
+        cob[cob["entregas"] == 0][["cedula", "nombre", "cargo", "sucursal"]]
+        .rename(columns={"cedula": "Cédula", "nombre": "Nombre", "cargo": "Cargo", "sucursal": "Sucursal"})
+    )
+    with st.expander(f"Trabajadores sin ninguna entrega ({len(sin_dot):,})"):
+        st.dataframe(sin_dot, hide_index=True, use_container_width=True)
+
+    hojas = {"Sin dotacion": sin_dot, "Cobertura por sucursal": por_suc}
+
+    # --- 2. Reposiciones ---
+    st.markdown("### Reposiciones")
+    rep = cargar_reposicion()
+    if rep.empty:
+        st.info(
+            "Aún no hay EPP con vida útil definida (columna vida_util_dias del catálogo). "
+            "Al definirla, aquí verás qué está vencido o por vencer."
+        )
+    else:
+        rep = rep.assign(sucursal=rep["sucursal"].fillna("Sin sucursal"))
+        if suc != "Todas":
+            rep = rep[rep["sucursal"] == suc]
+        hoy = pd.Timestamp.now(tz="America/Bogota").date()
+        rep["vence"] = pd.to_datetime(rep["vence"], utc=True).dt.tz_convert("America/Bogota").dt.date
+        rep["dias"] = rep["vence"].map(lambda d: (d - hoy).days)
+        pendientes = rep[rep["dias"] <= 30].sort_values("dias")
+        r1, r2 = st.columns(2)
+        r1.metric("Vencidos", int((rep["dias"] < 0).sum()))
+        r2.metric("Vencen en 30 días", int(((rep["dias"] >= 0) & (rep["dias"] <= 30)).sum()))
+        tabla = pendientes[["trabajador", "cedula", "sucursal", "epp", "vence", "dias"]].rename(columns={
+            "trabajador": "Trabajador", "cedula": "Cédula", "sucursal": "Sucursal",
+            "epp": "EPP", "vence": "Vence", "dias": "Días restantes",
+        })
+        if tabla.empty:
+            st.success("No hay reposiciones vencidas ni próximas a vencer.")
+        else:
+            st.dataframe(tabla, hide_index=True, use_container_width=True)
+            tabla_x = tabla.assign(Vence=tabla["Vence"].astype(str))
+            hojas["Reposiciones"] = tabla_x
+
+    # --- 3. Actividad del período ---
+    st.markdown("### Actividad del período")
+    det = cargar_detalle()
+    if suc != "Todas" and not det.empty:
+        det = det[det["sucursal"] == suc]
+    if det.empty:
+        st.info("Aún no hay entregas para mostrar actividad.")
+    else:
+        min_f, max_f = det["fecha"].min(), det["fecha"].max()
+        rango = st.date_input(
+            "Período",
+            value=(max(min_f, max_f - timedelta(days=90)), max_f),
+            min_value=min_f, max_value=max_f, key="kpi_rango",
+        )
+        if not rango_valido(rango):
+            st.info("Selecciona la fecha inicial y la final.")
+        else:
+            per = det[(det["fecha"] >= rango[0]) & (det["fecha"] <= rango[1])]
+            if per.empty:
+                st.warning("No hay entregas en ese período.")
+            else:
+                unidades = int(per["cantidad"].sum())
+                deterioro = int(per.loc[per["motivo"] == "DETERIORO", "cantidad"].sum())
+                reposicion = int(per.loc[per["motivo"] == "REPOSICION", "cantidad"].sum())
+                a1, a2, a3, a4 = st.columns(4)
+                a1.metric("Actas", f"{per['entrega_id'].nunique():,}")
+                a2.metric("Trabajadores atendidos", f"{per['trabajador_id'].nunique():,}")
+                a3.metric("Unidades", f"{unidades:,}")
+                a4.metric("% por deterioro", f"{deterioro / unidades * 100:.1f}%")
+                st.caption(f"Reposiciones: {reposicion:,} unidades · Deterioro: {deterioro:,} unidades")
+
+                g1, g2 = st.columns(2)
+                with g1:
+                    barras(per.groupby("epp")["cantidad"].sum().sort_values(ascending=False).head(10),
+                           "Top 10 EPP entregados", horizontal=True)
+                with g2:
+                    det_epp = per[per["motivo"] == "DETERIORO"].groupby("epp")["cantidad"].sum()
+                    if det_epp.empty:
+                        st.info("Sin entregas por deterioro en el período.")
+                    else:
+                        barras(det_epp.sort_values(ascending=False).head(8),
+                               "EPP con más deterioro", horizontal=True)
+
+                g3, g4 = st.columns(2)
+                with g3:
+                    barras(per.groupby("mes")["cantidad"].sum().sort_index(), "Unidades por mes")
+                with g4:
+                    if suc == "Todas":
+                        activos_suc = cob_all.groupby("sucursal").size()
+                        u_suc = per.groupby("sucursal")["cantidad"].sum()
+                        ratio = (u_suc / activos_suc).dropna().round(2).sort_values(ascending=False)
+                        barras(ratio, "Unidades por trabajador activo")
+                    else:
+                        barras(per.groupby("categoria")["cantidad"].sum().sort_values(ascending=False),
+                               "Unidades por categoría")
+
+                hojas["Detalle"] = per[list(MAPA_DETALLE)].rename(columns=MAPA_DETALLE)
+                hojas["Por EPP"] = (
+                    per.groupby(["categoria", "epp"])["cantidad"].sum()
+                    .reset_index().sort_values("cantidad", ascending=False)
+                )
+
+    st.markdown("---")
+    st.download_button(
+        "⬇️ Descargar indicadores en Excel",
+        data=a_excel(hojas),
+        file_name=f"Control_EPP_{date.today():%Y%m%d}.xlsx",
+        mime=XLSX_MIME,
+        type="primary",
+    )
+
+
+# ---------- Programa principal ----------
+if not check_password():
+    st.stop()
+
+encabezado()
+cargar_activos()   # precarga: las búsquedas quedan instantáneas
+cargar_catalogo()
+
+VISTAS = ["Registrar entrega", "Historial y Actas", "Control (KPIs)"]
+vista = st.segmented_control(
+    "Vista", VISTAS, default=VISTAS[0], key="vista", label_visibility="collapsed"
+) or VISTAS[0]
+
+if vista == VISTAS[0]:
+    tab_registro()
+elif vista == VISTAS[1]:
+    tab_historial()
+else:
+    tab_kpis()
 
 
 # ---------- Pestaña 3: KPIs e Indicadores ----------
