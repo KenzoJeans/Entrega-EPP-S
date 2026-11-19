@@ -19,6 +19,7 @@ st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="center
 
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
 LOGO = "logo.png"
+LOGO_NEGRO = "logonegro.png"
 COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
 BUCKET_FIRMAS = "firmas-epp"
 
@@ -380,8 +381,8 @@ class ActaEPP(FPDF):
 
         # Columna 1: Logo (x=10 a 50)
         self.rect(10, y_inicio, 40, alto_hdr)
-        if os.path.exists(LOGO):
-            self.image(LOGO, x=13, y=y_inicio + 3, w=34)
+        if os.path.exists(LOGO_NEGRO):
+            self.image(LOGO_NEGRO, x=13, y=y_inicio + 3, w=34)
 
         # Columna 2: Razón Social, Título y Datos Corporativos (x=50 a 152)
         self.rect(50, y_inicio, 102, alto_hdr)
