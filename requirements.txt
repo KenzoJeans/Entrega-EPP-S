@@ -4,3 +4,5 @@ pandas
 pillow
 streamlit-drawable-canvas-fix
 fpdf2
+xlsxwriter
+plotly
