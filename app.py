@@ -604,8 +604,10 @@ if not check_password():
     st.stop()
 
 encabezado()
-t1, t2 = st.tabs(["Registrar entrega", "Historial"])
+t1, t2, t3 = st.tabs(["Registrar entrega", "Historial y Actas", "Indicadores (KPIs)"])
 with t1:
     tab_registro()
 with t2:
     tab_historial()
+with t3:
+    tab_kpis()
