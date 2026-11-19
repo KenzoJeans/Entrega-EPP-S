@@ -1,3 +1,5 @@
 streamlit
 supabase
 pandas
+pillow
+streamlit-drawable-canvas-fix
