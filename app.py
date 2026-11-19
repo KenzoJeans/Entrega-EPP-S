@@ -375,14 +375,14 @@ def _txt(texto):
 class ActaEPP(FPDF):
     def header(self):
         # Marco del encabezado estilo Sistema de Gestión (3 columnas)
-        y_inicio = 6
+        y_inicio = 10
         alto_hdr = 24
         self.set_line_width(0.3)
 
         # Columna 1: Logo (x=10 a 50)
         self.rect(10, y_inicio, 40, alto_hdr)
         if os.path.exists(LOGO_NEGRO):
-            self.image(LOGO_NEGRO, x=13, y=y_inicio + 1, w=34)
+            self.image(LOGO_NEGRO, x=13, y=y_inicio, w=34)
 
         # Columna 2: Razón Social, Título y Datos Corporativos (x=50 a 152)
         self.rect(50, y_inicio, 102, alto_hdr)
