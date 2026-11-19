@@ -76,55 +76,75 @@ def alternar(clave, epp_id):
         sel.append(epp_id)
 
 
+CSS_GRID = """
+<style>
+.st-key-grid_epp [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
+.st-key-grid_epp [data-testid="stColumn"],
+.st-key-grid_epp [data-testid="column"] {
+    min-width: calc(50% - 1rem) !important;
+    flex: 1 1 calc(50% - 1rem) !important;
+}
+.st-key-grid_epp img {
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    background: #ffffff;
+    border-radius: 12px;
+    max-width: 220px;
+    width: 100%;
+    margin: 0 auto;
+    display: block;
+}
+.st-key-grid_epp button { min-height: 3.4rem; height: auto; }
+.st-key-grid_epp button p { white-space: normal; line-height: 1.2; }
+.placeholder-epp {
+    aspect-ratio: 1 / 1; max-width: 220px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    background: #1A1F2B; border-radius: 12px; font-size: 3rem;
+}
+</style>
+"""
+
+
 def selector_epp(catalogo, n):
     clave = f"sel{n}"
     st.session_state.setdefault(clave, [])
     seleccion = st.session_state[clave]
+    st.markdown(CSS_GRID, unsafe_allow_html=True)
 
-    # Estilo CSS para alinear al centro y ajustar el botón al ancho exacto de la imagen (120px)
-    st.markdown(
-        """
-        <style>
-        .st-key-grid_epp [data-testid="column"] {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .st-key-grid_epp button {
-            width: 120px !important;
-            max-width: 120px !important;
-            white-space: normal !important;
-            font-size: 0.85rem !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    categorias = ["Todas"] + sorted({e.get("categoria") or "Otros" for e in catalogo.values()})
+    cat = st.pills("Categoría", categorias, default="Todas", key=f"cat{n}") or "Todas"
+    buscar = st.text_input("Buscar EPP", key=f"bq{n}", placeholder="Ej: guantes, filtro...")
 
-    lista = list(catalogo.values())
+    if seleccion:
+        st.caption("Seleccionados: " + ", ".join(catalogo[i]["nombre"] for i in seleccion))
+
+    lista = [
+        e for e in catalogo.values()
+        if (cat == "Todas" or (e.get("categoria") or "Otros") == cat)
+        and buscar.strip().lower() in e["nombre"].lower()
+    ]
+    if not lista:
+        st.info("No hay EPP con ese filtro.")
+
     with st.container(key="grid_epp"):
-        for k in range(0, len(lista), 3):
-            cols = st.columns(3)
-            for col, e in zip(cols, lista[k:k + 3]):
+        for k in range(0, len(lista), 2):
+            cols = st.columns(2)
+            for col, e in zip(cols, lista[k:k + 2]):
                 with col:
                     if e.get("imagen_url"):
-                        st.image(e["imagen_url"], width=120)
+                        st.image(e["imagen_url"], use_container_width=True)
                     else:
-                        st.markdown(
-                            "<div style='font-size:2.5rem;text-align:center;height:120px;display:flex;align-items:center;justify-content:center;'>🦺</div>",
-                            unsafe_allow_html=True,
-                        )
+                        st.markdown('<div class="placeholder-epp">🦺</div>', unsafe_allow_html=True)
                     marcado = e["id"] in seleccion
                     st.button(
                         ("✓ " if marcado else "") + e["nombre"],
                         key=f"b{e['id']}_{n}",
                         type="primary" if marcado else "secondary",
-                        use_container_width=False,
+                        use_container_width=True,
                         on_click=alternar,
                         args=(clave, e["id"]),
                     )
     return seleccion
-
 
 # ---------- Pestaña 1: registrar ----------
 def tab_registro():
