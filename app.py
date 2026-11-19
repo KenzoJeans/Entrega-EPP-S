@@ -422,6 +422,182 @@ def generar_acta_pdf(entrega, firma_bytes=None):
 
     return bytes(pdf.output())
 
+# ---------- Pestaña 2: historial + descarga PDF ----------
+def tab_historial():
+    st.subheader("Últimas 50 entregas")
+    r = (
+        get_sb().table("entregas")
+        .select(
+            "id,fecha_hora,entregado_por,observaciones,firma_path,"
+            "trabajadores(nombre,cedula,cargo,sucursal),"
+            "entrega_detalle(cantidad,talla,motivo,epp_catalogo(nombre))"
+        )
+        .order("fecha_hora", desc=True)
+        .limit(50)
+        .execute()
+    )
+    if not r.data:
+        st.info("Todavía no hay entregas registradas.")
+        return
+
+    filas = []
+    entregas_map = {}
+    for e in r.data:
+        fecha = (
+            pd.to_datetime(e["fecha_hora"], utc=True)
+            .tz_convert("America/Bogota")
+            .strftime("%Y-%m-%d %H:%M")
+        )
+        e["fecha_local"] = fecha
+        entregas_map[e["id"]] = e
+        for d in e["entrega_detalle"]:
+            filas.append({
+                "Entrega": e["id"],
+                "Fecha": fecha,
+                "Trabajador": e["trabajadores"]["nombre"],
+                "Cédula": e["trabajadores"]["cedula"],
+                "EPP": d["epp_catalogo"]["nombre"],
+                "Cant.": d["cantidad"],
+                "Talla": d["talla"],
+                "Motivo": d["motivo"],
+                "Entregó": e["entregado_por"],
+            })
+
+    st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("**Detalle y descarga de acta firmada**")
+    elegida = st.selectbox(
+        "Selecciona una entrega",
+        list(entregas_map),
+        format_func=lambda i: f"Entrega #{i} · {entregas_map[i]['trabajadores']['nombre']} ({entregas_map[i]['fecha_local']})",
+    )
+    entrega_sel = entregas_map[elegida]
+    ruta = entrega_sel.get("firma_path")
+
+    col_img, col_pdf = st.columns([1, 1])
+    firma_bytes = None
+    with col_img:
+        if ruta:
+            try:
+                firma_bytes = get_sb().storage.from_(BUCKET_FIRMAS).download(ruta)
+                st.image(firma_bytes, width=240, caption="Firma registrada")
+            except Exception as ex:
+                st.warning(f"No se pudo cargar la firma: {ex}")
+        else:
+            st.caption("Esta entrega no tiene firma.")
+
+    with col_pdf:
+        pdf_bytes = generar_acta_pdf(entrega_sel, firma_bytes)
+        st.download_button(
+            label="📄 Descargar Acta en PDF",
+            data=pdf_bytes,
+            file_name=f"Acta_EPP_{entrega_sel['id']}_{entrega_sel['trabajadores']['cedula']}.pdf",
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True,
+        )
+
+
+# ---------- Pestaña 3: KPIs e Indicadores ----------
+@st.cache_data(ttl=120)
+def cargar_datos_kpi():
+    r = (
+        get_sb().table("entregas")
+        .select(
+            "id,fecha_hora,entregado_por,"
+            "trabajadores(nombre,cedula,cargo,sucursal),"
+            "entrega_detalle(cantidad,talla,motivo,epp_catalogo(nombre,categoria))"
+        )
+        .order("fecha_hora", desc=True)
+        .execute()
+    )
+    registros = []
+    for e in r.data:
+        dt = pd.to_datetime(e["fecha_hora"], utc=True).tz_convert("America/Bogota")
+        trab = e.get("trabajadores") or {}
+        for d in e.get("entrega_detalle") or []:
+            epp = d.get("epp_catalogo") or {}
+            registros.append({
+                "entrega_id": e["id"],
+                "fecha": dt.date(),
+                "mes": dt.strftime("%Y-%m"),
+                "trabajador": trab.get("nombre", "N/A"),
+                "cedula": trab.get("cedula", "N/A"),
+                "cargo": trab.get("cargo") or "Sin cargo",
+                "sucursal": trab.get("sucursal") or "Sin sucursal",
+                "epp": epp.get("nombre", "N/A"),
+                "categoria": epp.get("categoria") or "Otros",
+                "cantidad": d["cantidad"],
+                "motivo": d["motivo"],
+            })
+    return pd.DataFrame(registros)
+
+
+def tab_kpis():
+    st.subheader("Indicadores de Gestión de EPP")
+    df = cargar_datos_kpi()
+    if df.empty:
+        st.info("No hay datos suficientes para calcular indicadores.")
+        return
+
+    # Filtros superiores
+    c1, c2, c3 = st.columns(3)
+    min_f, max_f = df["fecha"].min(), df["fecha"].max()
+    rango = c1.date_input("Rango de fechas", value=(min_f, max_f), min_value=min_f, max_value=max_f)
+    sucursales = ["Todas"] + sorted(df["sucursal"].unique().tolist())
+    suc_sel = c2.selectbox("Sucursal", sucursales)
+    motivos_sel = c3.multiselect("Motivo", MOTIVOS, default=MOTIVOS)
+
+    if isinstance(rango, tuple) and len(rango) == 2:
+        df = df[(df["fecha"] >= rango[0]) & (df["fecha"] <= rango[1])]
+    if suc_sel != "Todas":
+        df = df[df["sucursal"] == suc_sel]
+    if motivos_sel:
+        df = df[df["motivo"].isin(motivos_sel)]
+
+    if df.empty:
+        st.warning("No hay registros con los filtros seleccionados.")
+        return
+
+    # KPIs principales
+    total_unidades = int(df["cantidad"].sum())
+    total_actas = df["entrega_id"].nunique()
+    trabajadores_unicos = df["cedula"].nunique()
+    unid_deterioro = int(df.loc[df["motivo"] == "DETERIORO", "cantidad"].sum())
+    tasa_deterioro = (unid_deterioro / total_unidades * 100) if total_unidades else 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("EPPs entregados", f"{total_unidades:,}")
+    k2.metric("Actas firmadas", f"{total_actas:,}")
+    k3.metric("Trabajadores dotados", f"{trabajadores_unicos:,}")
+    k4.metric("% por Deterioro", f"{tasa_deterioro:.1f}%")
+
+    st.markdown("---")
+
+    # Gráficos
+    g1, g2 = st.columns(2)
+    with g1:
+        st.markdown("**Top 10 EPPs más entregados**")
+        top_epp = df.groupby("epp")["cantidad"].sum().sort_values(ascending=False).head(10)
+        st.bar_chart(top_epp, horizontal=True)
+
+    with g2:
+        st.markdown("**Entregas por Motivo**")
+        por_motivo = df.groupby("motivo")["cantidad"].sum()
+        st.bar_chart(por_motivo)
+
+    g3, g4 = st.columns(2)
+    with g3:
+        st.markdown("**Consumo por Sucursal**")
+        por_suc = df.groupby("sucursal")["cantidad"].sum().sort_values(ascending=False)
+        st.bar_chart(por_suc)
+
+    with g4:
+        st.markdown("**Evolución Mensual (Unidades)**")
+        por_mes = df.groupby("mes")["cantidad"].sum().sort_index()
+        st.line_chart(por_mes)
+
 
 # ---------- Programa principal ----------
 if not check_password():
