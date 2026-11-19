@@ -2,26 +2,25 @@ import hmac
 import io
 import os
 import re
+import unicodedata
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
+from fpdf import FPDF
 from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from supabase import create_client
 
-import urllib.request
-from datetime import date, timedelta
-from fpdf import FPDF
-
 st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="centered")
 
-MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
 LOGO = "logo.png"
 LOGO_NEGRO = "logonegro.png"
 COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
 BUCKET_FIRMAS = "firmas-epp"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
 ROLES_ENTREGA = [
@@ -32,7 +31,6 @@ ROLES_ENTREGA = [
     "Líder de Gestión Ambiental",
     "Analista de Gestión Ambiental",
 ]
-
 
 # ---------- Conexión ----------
 @st.cache_resource
@@ -74,20 +72,37 @@ def cargar_catalogo():
     return r.data
 
 
+def normalizar(texto):
+    sin_tildes = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode()
+    return sin_tildes.lower()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_activos():
+    filas, desde = [], 0
+    while True:
+        r = (
+            get_sb().table("trabajadores")
+            .select("id,cedula,nombre,cargo,sucursal")
+            .eq("estado_laboral", "ACTIVO")
+            .order("id")
+            .range(desde, desde + 999)
+            .execute()
+        )
+        filas += r.data
+        if len(r.data) < 1000:
+            break
+        desde += 1000
+    for w in filas:
+        w["_busq"] = normalizar(f"{w['nombre']} {w['cedula']}")
+    return filas
+
+
 def buscar_trabajadores(texto):
-    texto = re.sub(r"[,()%*]", " ", texto).strip()
-    if len(texto) < 3:
+    t = normalizar(texto).strip()
+    if len(t) < 3:
         return []
-    r = (
-        get_sb().table("trabajadores")
-        .select("id,cedula,nombre,cargo,sucursal")
-        .eq("estado_laboral", "ACTIVO")
-        .or_(f"cedula.ilike.%{texto}%,nombre.ilike.%{texto}%")
-        .order("nombre")
-        .limit(20)
-        .execute()
-    )
-    return r.data
+    return [w for w in cargar_activos() if t in w["_busq"]][:20]
 
 
 def firma_a_png(image_data):
