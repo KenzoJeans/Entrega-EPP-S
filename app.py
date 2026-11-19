@@ -22,6 +22,16 @@ LOGO = "logo.png"
 COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
 BUCKET_FIRMAS = "firmas-epp"
 
+MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
+ROLES_ENTREGA = [
+    "Brigadista",
+    "Líder de SST",
+    "Auxiliar de SST",
+    "Enfermera",
+    "Líder de Gestión Ambiental",
+    "Analista de Gestión Ambiental",
+]
+
 
 # ---------- Conexión ----------
 @st.cache_resource
@@ -220,7 +230,13 @@ def tab_registro():
 
     # 3. Cierre
     st.subheader("3. Cierre")
-    entregado_por = st.text_input("Entregado por", key=f"ep{n}")
+    entregado_por = st.selectbox(
+        "Entregado por",
+        options=ROLES_ENTREGA,
+        index=None,
+        placeholder="Selecciona quién realiza la entrega...",
+        key=f"ep{n}",
+    )
     observaciones = st.text_area("Observaciones (opcional)", key=f"ob{n}")
 
     # 4. Firma
@@ -244,8 +260,8 @@ def tab_registro():
             errores.append("Selecciona un trabajador.")
         if not items:
             errores.append("Selecciona al menos un EPP.")
-        if not entregado_por.strip():
-            errores.append("Indica quién entrega.")
+        if not entregado_por:
+            errores.append("Selecciona quién entrega.")
         for it in items:
             if it["_requiere_talla"] and not it["talla"]:
                 errores.append(f"Falta la talla de {it['_nombre']}.")
