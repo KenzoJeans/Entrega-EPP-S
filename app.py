@@ -903,27 +903,6 @@ def tab_kpis():
     )
 
 
-# ---------- Programa principal ----------
-if not check_password():
-    st.stop()
-
-encabezado()
-cargar_activos()   # precarga: las búsquedas quedan instantáneas
-cargar_catalogo()
-
-VISTAS = ["Registrar entrega", "Historial y Actas", "Control (KPIs)"]
-vista = st.segmented_control(
-    "Vista", VISTAS, default=VISTAS[0], key="vista", label_visibility="collapsed"
-) or VISTAS[0]
-
-if vista == VISTAS[0]:
-    tab_registro()
-elif vista == VISTAS[1]:
-    tab_historial()
-else:
-    tab_kpis()
-
-
 # ---------- Pestaña 3: KPIs e Indicadores ----------
 @st.cache_data(ttl=120)
 def cargar_datos_kpi():
