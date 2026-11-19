@@ -289,7 +289,7 @@ def tab_registro():
                 st.error(err)
             return
 
-                payload = [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
+        payload = [{k: v for k, v in it.items() if not k.startswith("_")} for it in items]
         png = firma_a_png(lienzo.image_data)
         ruta = f"{datetime.now():%Y/%m}/{uuid.uuid4().hex}.png"
         subida = False
