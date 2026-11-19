@@ -375,7 +375,7 @@ def _txt(texto):
 class ActaEPP(FPDF):
     def header(self):
         # Marco del encabezado estilo Sistema de Gestión (3 columnas)
-        y_inicio = 10
+        y_inicio = 6
         alto_hdr = 24
         self.set_line_width(0.3)
 
