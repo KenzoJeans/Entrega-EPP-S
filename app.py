@@ -11,6 +11,10 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 from supabase import create_client
 
+import urllib.request
+from datetime import date, timedelta
+from fpdf import FPDF
+
 st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="centered")
 
 MOTIVOS = ["NUEVO", "REPOSICION", "DETERIORO"]
