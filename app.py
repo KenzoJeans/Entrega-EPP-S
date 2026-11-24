@@ -1,7 +1,6 @@
 import hmac
 import io
 import os
-import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -9,16 +8,24 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 from fpdf import FPDF
-from PIL import Image
 from streamlit_drawable_canvas import st_canvas
-from supabase import create_client
+
+import inspeccion
+from comun import (
+    BUCKET_FIRMAS,
+    buscar_trabajadores,
+    cargar_activos,
+    firma_a_png,
+    get_sb,
+    normalizar,
+    traer_todo,
+)
 
 st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="centered")
 
 LOGO = "logo.png"
 LOGO_NEGRO = "logonegro.png"
 COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
-BUCKET_FIRMAS = "firmas-epp"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Datos del formato oficial (cámbialos aquí cuando SST actualice el formato)
@@ -37,11 +44,6 @@ ROLES_ENTREGA = [
 
 
 # ---------- Conexión ----------
-@st.cache_resource
-def get_sb():
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_KEY"])
-
-
 # ---------- Acceso con contraseña ----------
 def encabezado():
     if os.path.exists(LOGO):
@@ -76,48 +78,6 @@ def cargar_catalogo():
     return r.data
 
 
-def normalizar(texto):
-    sin_tildes = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode()
-    return sin_tildes.lower()
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def cargar_activos():
-    filas, desde = [], 0
-    while True:
-        r = (
-            get_sb().table("trabajadores")
-            .select("id,cedula,nombre,cargo,sucursal")
-            .eq("estado_laboral", "ACTIVO")
-            .order("id")
-            .range(desde, desde + 999)
-            .execute()
-        )
-        filas += r.data
-        if len(r.data) < 1000:
-            break
-        desde += 1000
-    for w in filas:
-        w["_busq"] = normalizar(f"{w['nombre']} {w['cedula']}")
-    return filas
-
-
-def buscar_trabajadores(texto):
-    t = normalizar(texto).strip()
-    if len(t) < 3:
-        return []
-    return [w for w in cargar_activos() if t in w["_busq"]][:20]
-
-
-
-
-def firma_a_png(image_data):
-    img = Image.fromarray(image_data.astype("uint8"), "RGBA")
-    fondo = Image.new("RGB", img.size, (255, 255, 255))
-    fondo.paste(img, mask=img.split()[3])
-    buf = io.BytesIO()
-    fondo.save(buf, format="PNG")
-    return buf.getvalue()
 
 
 # ---------- Selector de EPP con imágenes ----------
@@ -520,18 +480,6 @@ MAPA_DETALLE = {
 }
 
 
-def traer_todo(fabrica, tam=1000):
-    """Pide los datos por páginas para superar el tope de 1000 filas."""
-    filas, desde = [], 0
-    while True:
-        r = fabrica().range(desde, desde + tam - 1).execute()
-        filas += r.data
-        if len(r.data) < tam:
-            break
-        desde += tam
-    return filas
-
-
 @st.cache_data(ttl=120, show_spinner="Cargando datos...")
 def cargar_detalle():
     filas = traer_todo(
@@ -869,7 +817,13 @@ encabezado()
 cargar_activos()   # precarga: las búsquedas quedan instantáneas
 cargar_catalogo()
 
-VISTAS = ["Registrar entrega", "Historial y Actas", "Control (KPIs)"]
+VISTAS = [
+    "Registrar entrega",
+    "Historial y Actas",
+    "Control (KPIs)",
+    "Inspección de uso",
+    "Medidas de control",
+]
 vista = st.segmented_control(
     "Vista", VISTAS, default=VISTAS[0], key="vista", label_visibility="collapsed"
 ) or VISTAS[0]
@@ -878,5 +832,9 @@ if vista == VISTAS[0]:
     tab_registro()
 elif vista == VISTAS[1]:
     tab_historial()
-else:
+elif vista == VISTAS[2]:
     tab_kpis()
+elif vista == VISTAS[3]:
+    inspeccion.tab_inspeccion()
+else:
+    inspeccion.tab_medidas()
