@@ -11,8 +11,11 @@ from fpdf import FPDF
 from streamlit_drawable_canvas import st_canvas
 
 import inspeccion
+import reporte_inspeccion
 from comun import (
     BUCKET_FIRMAS,
+    XLSX_MIME,
+    a_excel,
     buscar_trabajadores,
     cargar_activos,
     firma_a_png,
@@ -26,7 +29,6 @@ st.set_page_config(page_title="Entrega de EPP", page_icon="🦺", layout="center
 LOGO = "logo.png"
 LOGO_NEGRO = "logonegro.png"
 COLUMNAS = 3  # tarjetas por fila: prueba 2, 3 o 4
-XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Datos del formato oficial (cámbialos aquí cuando SST actualice el formato)
 CODIGO_FORMATO = "SST-HI-ED-FO-04"
@@ -521,28 +523,6 @@ def cargar_reposicion():
     return pd.DataFrame(filas)
 
 
-def a_excel(hojas):
-    """Convierte {nombre_hoja: DataFrame} en un .xlsx con formato."""
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
-        encabezado_fmt = xl.book.add_format({
-            "bold": True, "bg_color": "#1F7A3D", "font_color": "#FFFFFF",
-            "border": 1, "valign": "vcenter",
-        })
-        for nombre, df in hojas.items():
-            hoja = nombre[:31]
-            df.to_excel(xl, sheet_name=hoja, index=False)
-            ws = xl.sheets[hoja]
-            for j, col in enumerate(df.columns):
-                ws.write(0, j, col, encabezado_fmt)
-                largo = df[col].astype(str).str.len().max() if len(df) else 0
-                ws.set_column(j, j, min(max(len(str(col)), largo) + 2, 45))
-            ws.freeze_panes(1, 0)
-            if len(df):
-                ws.autofilter(0, 0, len(df), len(df.columns) - 1)
-    return buf.getvalue()
-
-
 @st.cache_data(ttl=3600, show_spinner="Generando acta...")
 def acta_bytes(entrega_id):
     e = (
@@ -823,6 +803,7 @@ VISTAS = [
     "Control (KPIs)",
     "Inspección de uso",
     "Medidas de control",
+    "Reporte de inspecciones",
 ]
 vista = st.segmented_control(
     "Vista", VISTAS, default=VISTAS[0], key="vista", label_visibility="collapsed"
@@ -836,5 +817,7 @@ elif vista == VISTAS[2]:
     tab_kpis()
 elif vista == VISTAS[3]:
     inspeccion.tab_inspeccion()
-else:
+elif vista == VISTAS[4]:
     inspeccion.tab_medidas()
+else:
+    reporte_inspeccion.tab_reporte()
