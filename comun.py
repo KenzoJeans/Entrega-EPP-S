@@ -9,6 +9,7 @@ from PIL import Image
 from supabase import create_client
 
 BUCKET_FIRMAS = "firmas-epp"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 # ---------- Conexión ----------
@@ -107,3 +108,26 @@ def acceso(clave_estado, secreto, titulo):
         else:
             st.error("Clave incorrecta.")
     return False
+
+
+# ---------- Excel ----------
+def a_excel(hojas):
+    """Convierte {nombre_hoja: DataFrame} en un .xlsx con formato."""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as xl:
+        encabezado_fmt = xl.book.add_format({
+            "bold": True, "bg_color": "#1F7A3D", "font_color": "#FFFFFF",
+            "border": 1, "valign": "vcenter",
+        })
+        for nombre, df in hojas.items():
+            hoja = nombre[:31]
+            df.to_excel(xl, sheet_name=hoja, index=False)
+            ws = xl.sheets[hoja]
+            for j, col in enumerate(df.columns):
+                ws.write(0, j, col, encabezado_fmt)
+                largo = df[col].astype(str).str.len().max() if len(df) else 0
+                ws.set_column(j, j, min(max(len(str(col)), largo) + 2, 45))
+            ws.freeze_panes(1, 0)
+            if len(df):
+                ws.autofilter(0, 0, len(df), len(df.columns) - 1)
+    return buf.getvalue()
